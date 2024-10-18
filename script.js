@@ -1,5 +1,9 @@
 require("dotenv").config();
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 const {Client} = require("pg");
+const FormData = require("form-data");
 
 const uenoClient = new Client({
   connectionString: process.env.UENOBET_DB_URL,
@@ -30,10 +34,10 @@ async function getUenoGamesWithoutImg() {
 
     const uenoGamesWithoutThumbnail = res.rows;
 
-    // console.log(
-    //   `Total: ${uenoGamesWithoutThumbnail.length} Jogos sem capa:`,
-    //   uenoGamesWithoutThumbnail
-    // );
+    console.log(
+      `Total: ${uenoGamesWithoutThumbnail.length} Jogos sem capa:`,
+      uenoGamesWithoutThumbnail
+    );
 
     return uenoGamesWithoutThumbnail;
   } catch (err) {
@@ -43,7 +47,7 @@ async function getUenoGamesWithoutImg() {
   await uenoClient.end();
 }
 
-async function getGiroWinGamesImg(gameName) {
+async function getGiroWinGamesImgUrl(gameName) {
   try {
     // await giroWinClient.connect();
 
@@ -57,17 +61,66 @@ async function getGiroWinGamesImg(gameName) {
     );
 
     const [game] = res.rows;
-    // console.log(game[0].thumbnail_url);
-
+    console.log(game.thumbnail_url);
     return game.thumbnail_url;
   } catch (err) {
     console.error("Erro ao buscar capas:", err);
   } finally {
+    // await giroWinClient.end();
   }
-  await giroWinClient.end();
 }
 
-async function matchGamesWithImg() {
+async function downloadImg(url, filepath) {
+  const writer = fs.createWriteStream(filepath);
+  const response = await axios({
+    url,
+    method: "GET",
+    responseType: "stream",
+  });
+
+  response.data.pipe(writer);
+
+  return new Promise((resolve, reject) => {
+    writer.on("finish", resolve);
+    writer.on("error", reject);
+  });
+}
+
+async function sendImageToUenobetDB(gameId) {
+  try {
+    const imagePath = path.join(__dirname, "temp", "teste.jpg");
+
+    if (!imagePath) {
+      throw new Error("Imagem não encontrada");
+    }
+
+    const imageStream = fs.createReadStream(imagePath);
+    // console.log("Stream da imagem criado:", imageStream);
+
+    const form = new FormData();
+    form.append("file", imageStream);
+
+    const headers = {
+      ...form.getHeaders(),
+      Authorization: `Bearer ${process.env.UENOBET_ACCESS_TOKEN}`,
+      "x-fingerprint": process.env.UENOBET_FINGERPRINT,
+    };
+
+    const response = await axios.patch(
+      `https://api-dash-stage.uenobet.com/games/${gameId}`,
+      form,
+      {
+        headers: headers,
+      }
+    );
+
+    console.log("Imagem enviada com sucesso:", response.data);
+  } catch (error) {
+    console.error("Erro ao enviar a imagem:", error.message);
+  }
+}
+
+async function updateUenobetImgs() {
   const uenoGames = await getUenoGamesWithoutImg();
   const gamesWithThumbnails = [];
   await giroWinClient.connect();
@@ -80,6 +133,7 @@ async function matchGamesWithImg() {
         gamesWithThumbnails.push({
           name: game.game_name,
           thumbnail_url: thumbnailUrl,
+          id: game.id,
         });
       } else {
         console.log("Capa não encontrada para o jogo:", game.game_name);
@@ -94,5 +148,11 @@ async function matchGamesWithImg() {
 }
 
 // getUenoGamesWithoutImg();
-// getGiroWinGamesImg("Bonanza");
-matchGamesWithImg();
+// getGiroWinGamesImgUrl("Bonanza");
+// updateUenobetImgs();
+
+// const filePath = path.join(__dirname, 'temp', 'teste.jpg');
+// downloadImg()
+const testId = "ef42af47-2779-4903-a6fb-cc9da779c97b";
+
+sendImageToUenobetDB(testId);
